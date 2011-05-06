@@ -1,0 +1,323 @@
+/* vi:filetype=c: */
+
+typedef enum {
+	SVt_NULL,	/* 0 */
+	SVt_IV,		/* 1 */
+	SVt_NV,		/* 2 */
+	SVt_RV,		/* 3 */
+	SVt_PV,		/* 4 */
+	SVt_PVIV,	/* 5 */
+	SVt_PVNV,	/* 6 */
+	SVt_PVMG,	/* 7 */
+	SVt_PVBM,	/* 8 */
+	SVt_PVLV,	/* 9 */
+	SVt_PVAV,	/* 10 */
+	SVt_PVHV,	/* 11 */
+	SVt_PVCV,	/* 12 */
+	SVt_PVGV,	/* 13 */
+	SVt_PVFM,	/* 14 */
+	SVt_PVIO,	/* 15 */
+	SVt_LAST	/* keep last in enum. used to size arrays */
+} svtype;
+
+void Perl_sv_setsv_flags(pTHX_ SV *dstr, register SV *sstr, I32 flags) {
+    register U32 sflags;
+    register int dtype;
+    register svtype stype;
+
+    if (sstr == dstr)
+        return;
+
+    if (SvIS_FREED(dstr)) {
+        Perl_croak(aTHX_ "panic: attempt to copy value %" SVf " to a freed scalar %p", sstr, dstr);
+    }
+
+    SV_CHECK_THINKFIRST(dstr);
+    if (!sstr)
+        sstr = &PL_sv_undef;
+
+    if (SvIS_FREED(sstr)) {
+        Perl_croak(aTHX_ "panic: attempt to copy freed scalar %p to %p", sstr, dstr);
+    }
+
+    stype = SvTYPE(sstr);
+    dtype = SvTYPE(dstr);
+
+    (void)SvAMAGIC_off(dstr);
+
+    if ( SvVOK(dstr) ) {
+        /* need to nuke the magic */
+        mg_free(dstr);
+        SvRMAGICAL_off(dstr);
+    }
+
+    /* There's a lot of redundancy below but we're going for speed here */
+
+    switch (stype) {
+        case SVt_NULL:
+            undef_sstr:
+            if (dtype != SVt_PVGV) {
+                (void)SvOK_off(dstr);
+                return;
+            }
+            break;
+
+        case SVt_IV:
+            if (SvIOK(sstr)) {
+                switch (dtype) {
+                    case SVt_NULL:
+                        sv_upgrade(dstr, SVt_IV);
+                        break;
+
+                    case SVt_NV:
+                    case SVt_RV:
+                    case SVt_PV:
+                        sv_upgrade(dstr, SVt_PVIV);
+                        break;
+                }
+
+                (void)SvIOK_only(dstr);
+                SvIV_set(dstr,  SvIVX(sstr));
+
+                if (SvIsUV(sstr))
+                    SvIsUV_on(dstr);
+
+                /* SvTAINTED can only be true if the SV has taint magic, which in
+                turn means that the SV type is PVMG (or greater). This is the
+                case statement for SVt_IV, so this cannot be true (whatever gcov
+                may say).  */
+
+                return;
+            }
+            goto undef_sstr;
+
+        case SVt_NV:
+            if (SvNOK(sstr)) {
+                switch (dtype) {
+                    case SVt_NULL:
+                    case SVt_IV:
+                        sv_upgrade(dstr, SVt_NV);
+                        break;
+
+                    case SVt_RV:
+                    case SVt_PV:
+                    case SVt_PVIV:
+                        sv_upgrade(dstr, SVt_PVNV);
+                        break;
+                }
+
+                SvNV_set(dstr, SvNVX(sstr));
+                (void)SvNOK_only(dstr);
+
+                /* SvTAINTED can only be true if the SV has taint magic, which in
+                turn means that the SV type is PVMG (or greater). This is the
+                case statement for SVt_NV, so this cannot be true (whatever gcov
+                may say).  */
+
+                return;
+            }
+            goto undef_sstr;
+
+        case SVt_RV:
+            if (dtype < SVt_RV)
+                sv_upgrade(dstr, SVt_RV);
+            break;
+
+        case SVt_PV:
+        case SVt_PVFM:
+            if (dtype < SVt_PV)
+                sv_upgrade(dstr, SVt_PV);
+            break;
+
+        case SVt_PVIV:
+            if (dtype < SVt_PVIV)
+                sv_upgrade(dstr, SVt_PVIV);
+            break;
+
+        case SVt_PVNV:
+            if (dtype < SVt_PVNV)
+                sv_upgrade(dstr, SVt_PVNV);
+            break;
+
+        default:
+            {
+                const char * const type = sv_reftype(sstr,0);
+                if (PL_op)
+                    Perl_croak(aTHX_ "Bizarre copy of %s in %s", type, OP_NAME(PL_op));
+                else
+                    Perl_croak(aTHX_ "Bizarre copy of %s", type);
+            }
+            break;
+
+        case SVt_PVGV:
+            if (dtype <= SVt_PVGV) {
+                glob_assign_glob(dstr, sstr, dtype);
+                return;
+            }
+        /*FALLTHROUGH*/
+
+        case SVt_PVMG:
+        case SVt_PVLV:
+        case SVt_PVBM:
+            if (SvGMAGICAL(sstr) && (flags & SV_GMAGIC)) {
+                mg_get(sstr);
+                if (SvTYPE(sstr) != stype) {
+                    stype = SvTYPE(sstr);
+
+                    if (stype == SVt_PVGV && dtype <= SVt_PVGV) {
+                        glob_assign_glob(dstr, sstr, dtype);
+                        return;
+                    }
+                }
+            }
+            if (stype == SVt_PVLV)
+
+                (void)SvUPGRADE(dstr, SVt_PVNV);
+            else
+                (void)SvUPGRADE(dstr, (svtype)stype);
+    }
+
+    /* dstr may have been upgraded.  */
+    dtype = SvTYPE(dstr);
+    sflags = SvFLAGS(sstr);
+
+    if (sflags & SVf_ROK) {
+        if (dtype == SVt_PVGV && SvTYPE(SvRV(sstr)) == SVt_PVGV) {
+            sstr = SvRV(sstr);
+
+            if (sstr == dstr) {
+                if (GvIMPORTED(dstr) != GVf_IMPORTED && CopSTASH_ne(PL_curcop, GvSTASH(dstr))) {
+                    GvIMPORTED_on(dstr);
+                }
+
+                GvMULTI_on(dstr);
+                return;
+            }
+
+            glob_assign_glob(dstr, sstr, dtype);
+            return;
+        }
+
+        if (dtype >= SVt_PV) {
+            if (dtype == SVt_PVGV && isGV_with_GP(dstr)) {
+                glob_assign_ref(dstr, sstr);
+                return;
+            }
+
+            if (SvPVX_const(dstr)) {
+                SvPV_free(dstr);
+                SvLEN_set(dstr, 0);
+                SvCUR_set(dstr, 0);
+            }
+        }
+
+        (void)SvOK_off(dstr);
+
+        SvRV_set(dstr, SvREFCNT_inc(SvRV(sstr)));
+        SvFLAGS(dstr) |= sflags & (SVf_IOK|SVp_IOK|SVf_NOK|SVp_NOK|SVf_ROK |SVf_AMAGIC);
+
+        if (sflags & SVp_NOK) {
+            SvNV_set(dstr, SvNVX(sstr));
+        }
+
+        if (sflags & SVp_IOK) {
+            /* Must do this otherwise some other overloaded use of 0x80000000
+            gets confused. Probably SVprv_WEAKREF */
+
+            if (sflags & SVf_IVisUV)
+                SvIsUV_on(dstr);
+
+            SvIV_set(dstr, SvIVX(sstr));
+        }
+
+    } else if (sflags & SVp_POK) {
+        /*
+        * Check to see if we can just swipe the string.  If so, it's a
+        * possible small lose on short strings, but a big win on long ones.
+        * It might even be a win on short strings if SvPVX_const(dstr)
+        * has to be allocated and SvPVX_const(sstr) has to be freed.
+        */
+
+        if (SvTEMP(sstr) &&		/* slated for free anyway? */
+            SvREFCNT(sstr) == 1 && 	/* and no other references to it? */
+            (!(flags & SV_NOSTEAL)) &&	/* and we're allowed to steal temps */
+            !(sflags & SVf_OOK) && 	/* and not involved in OOK hack? */
+            SvLEN(sstr) 	&&	/* and really is a string */
+            /* and won't be needed again, potentially */
+            !(PL_op && PL_op->op_type == OP_AASSIGN)) {
+
+                if (SvPVX_const(dstr)) {	/* we know that dtype >= SVt_PV */
+                    SvPV_free(dstr);
+                }
+
+                (void)SvPOK_only(dstr);
+                SvPV_set(dstr, SvPVX(sstr));
+                SvLEN_set(dstr, SvLEN(sstr));
+                SvCUR_set(dstr, SvCUR(sstr));
+
+                SvTEMP_off(dstr);
+                (void)SvOK_off(sstr);	/* NOTE: nukes most SvFLAGS on sstr */
+                SvPV_set(sstr, NULL);
+                SvLEN_set(sstr, 0);
+                SvCUR_set(sstr, 0);
+                SvTEMP_off(sstr);
+
+        } else { /* have to copy actual string */
+            STRLEN len = SvCUR(sstr);
+            SvGROW(dstr, len + 1);	/* inlined from sv_setpvn */
+            Move(SvPVX_const(sstr),SvPVX(dstr),len,char);
+            SvCUR_set(dstr, len);
+            *SvEND(dstr) = '\0';
+            (void)SvPOK_only(dstr);
+        }
+
+        if (sflags & SVp_NOK) {
+            SvNV_set(dstr, SvNVX(sstr));
+        }
+
+        if (sflags & SVp_IOK) {
+            SvOOK_off(dstr);
+            SvIV_set(dstr, SvIVX(sstr));
+
+            /* Must do this otherwise some other overloaded use of 0x80000000
+            gets confused. I guess SVpbm_VALID */
+
+            if (sflags & SVf_IVisUV)
+                SvIsUV_on(dstr);
+        }
+
+        SvFLAGS(dstr) |= sflags & (SVf_IOK|SVp_IOK|SVf_NOK|SVp_NOK|SVf_UTF8);
+
+        {
+            const MAGIC * const smg = SvVSTRING_mg(sstr);
+            if (smg) {
+                sv_magic(dstr, NULL, PERL_MAGIC_vstring, smg->mg_ptr, smg->mg_len);
+                SvRMAGICAL_on(dstr);
+            }
+        }
+
+    } else if (sflags & (SVp_IOK|SVp_NOK)) {
+        (void)SvOK_off(dstr);
+        SvFLAGS(dstr) |= sflags & (SVf_IOK|SVp_IOK|SVf_IVisUV|SVf_NOK|SVp_NOK);
+        if (sflags & SVp_IOK) {
+            /* XXXX Do we want to set IsUV for IV(ROK)?  Be extra safe... */
+            SvIV_set(dstr, SvIVX(sstr));
+        }
+
+        if (sflags & SVp_NOK) {
+            SvNV_set(dstr, SvNVX(sstr));
+        }
+
+    } else {
+        if (dtype == SVt_PVGV) {
+            if (ckWARN(WARN_MISC))
+                Perl_warner(aTHX_ packWARN(WARN_MISC), "Undefined value assigned to typeglob");
+
+        } else {
+            (void)SvOK_off(dstr);
+        }
+    }
+
+    if (SvTAINTED(sstr))
+        SvTAINT(dstr);
+}

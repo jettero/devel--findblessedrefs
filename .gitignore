@@ -1,0 +1,11 @@
+perl-5.8.8
+Makefile
+blib
+pm_to_blib
+*.bs
+*.c
+FindBlessedRefs.o
+Makefile.old
+_build
+Build
+META.yml

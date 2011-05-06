@@ -1,0 +1,6 @@
+^\.gitignore$
+^MANIFEST\.SKIP$
+^Makefile$
+^\.git
+^blib$
+^pm_to_blib$
