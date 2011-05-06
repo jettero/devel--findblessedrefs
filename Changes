@@ -1,3 +1,6 @@
+1.253: Fri May 06 2011
+   - fixed a couple typos.  renamed find_refs_with_coderef
+
 1.252: Wed Mar 25 16:22:38 EDT 2009
    - added chorny's META.yml stuff
 
